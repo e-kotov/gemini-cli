@@ -30,7 +30,10 @@ jobs:
 
           # Sync main branch (Nightly)
           git checkout main
-          git merge upstream/main --ff-only || git reset --hard upstream/main
+          
+          # Merge upstream/main into our main. 
+          # This keeps our new files while bringing in all of Google's updates.
+          git merge upstream/main -m "chore: sync with upstream" --allow-unrelated-histories
           
           # Push changes and tags to your fork
-          git push origin main --tags --force
+          git push origin main --tags
