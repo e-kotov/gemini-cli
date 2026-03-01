@@ -5,6 +5,11 @@ on:
     branches: [ main ]
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      ref_override:
+        description: 'Optional branch, tag, or SHA to build and push.'
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -22,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.inputs.ref_override || github.ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -66,10 +72,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
-            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
-            type=raw,value=preview,enable=${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-preview') }}
-            type=raw,value=nightly,enable=${{ github.ref == 'refs/heads/main' || contains(github.ref, '-nightly') }}
+            type=raw,value=latest,enable=${{ (startsWith(github.event.inputs.ref_override || github.ref, 'refs/tags/v') || startsWith(github.event.inputs.ref_override, 'v')) && !contains(github.event.inputs.ref_override || github.ref, '-') }}
+            type=raw,value=stable,enable=${{ (startsWith(github.event.inputs.ref_override || github.ref, 'refs/tags/v') || startsWith(github.event.inputs.ref_override, 'v')) && !contains(github.event.inputs.ref_override || github.ref, '-') }}
+            type=raw,value=preview,enable=${{ (startsWith(github.event.inputs.ref_override || github.ref, 'refs/tags/v') || startsWith(github.event.inputs.ref_override, 'v')) && contains(github.event.inputs.ref_override || github.ref, '-preview') }}
+            type=raw,value=nightly,enable=${{ (github.event.inputs.ref_override || github.ref) == 'refs/heads/main' || (github.event.inputs.ref_override || github.ref) == 'main' || contains(github.event.inputs.ref_override || github.ref, '-nightly') }}
             type=raw,value=${{ steps.package-version.outputs.version }}
             type=semver,pattern={{version}}
             type=sha
