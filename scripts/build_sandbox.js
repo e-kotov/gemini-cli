@@ -41,7 +41,7 @@ const argv = yargs(hideBin(process.argv))
   .option('f', {
     alias: 'dockerfile',
     type: 'string',
-    default: 'Dockerfile',
+    default: 'Dockerfile.sandbox',
     description: 'use <dockerfile> for custom image',
   })
   .option('i', {

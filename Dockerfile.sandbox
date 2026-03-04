@@ -8,6 +8,9 @@ ENV CLI_VERSION=$CLI_VERSION_ARG
 # install minimal set of packages, then clean up
 RUN apt-get update && apt-get install -y --no-install-recommends \
   python3 \
+  python3-pip \
+  python3-venv \
+  r-base \
   make \
   g++ \
   man-db \
@@ -28,6 +31,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
+
+# Configure R, install uv, and install DuckDB
+RUN mkdir -p /usr/lib/R/etc \
+  && echo 'options(repos = c(CRAN = "https://p3m.dev/cran/__linux__/bookworm/latest"), download.file.method = "libcurl")' >> /usr/lib/R/etc/Rprofile.site \
+  && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="/usr/local/bin" sh \
+  && mkdir -p /tmp/duckdb && cd /tmp/duckdb \
+  && curl -sLS https://install.duckdb.org | sh \
+  && mv duckdb /usr/local/bin/ \
+  && cd / && rm -rf /tmp/duckdb
 
 # set up npm global package folder under /usr/local/share
 # give it to non-root user node, already set up in base image
