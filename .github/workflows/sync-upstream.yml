@@ -1,0 +1,39 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Every day at midnight UTC
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Using a PAT (Personal Access Token) allows this sync to trigger the Build workflow
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Sync from Upstream
+        run: |
+          # Configure Git
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+
+          # Add upstream remote
+          git remote add upstream https://github.com/google-gemini/gemini-cli.git
+          
+          # Fetch everything from upstream
+          git fetch upstream main --tags
+
+          # Sync main branch (Nightly)
+          git checkout main
+          
+          # Merge upstream/main into our main. 
+          # This keeps our new files while bringing in all of Google's updates.
+          git merge upstream/main -m "chore: sync with upstream" --allow-unrelated-histories
+          
+          # Push changes and tags to your fork
+          git push origin main --tags

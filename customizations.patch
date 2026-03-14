@@ -1,0 +1,311 @@
+diff --git a/.github/workflows/build-arm-image.yml b/.github/workflows/build-arm-image.yml
+new file mode 100644
+index 000000000..5f1b31506
+--- /dev/null
++++ b/.github/workflows/build-arm-image.yml
+@@ -0,0 +1,93 @@
++name: Build and Push ARM64 Docker Image
++
++on:
++  push:
++    branches: [ main ]
++    tags: [ 'v*' ]
++  workflow_dispatch:
++    inputs:
++      ref_override:
++        description: 'Optional branch, tag, or SHA to build and push.'
++        required: false
++        type: string
++
++env:
++  REGISTRY: ghcr.io
++  IMAGE_NAME: ${{ github.repository_owner }}/gemini-cli-sandbox
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++    permissions:
++      contents: read
++      packages: write
++
++    steps:
++      - name: Checkout repository
++        uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++          ref: ${{ github.event.inputs.ref_override || github.ref }}
++
++      - name: Set up Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: '20'
++          cache: 'npm'
++
++      - name: Install dependencies
++        run: npm install
++
++      - name: Build packages
++        run: npm run build
++
++      - name: Pack packages
++        run: |
++          mkdir -p packages/cli/dist packages/core/dist
++          npm pack -w @google/gemini-cli --pack-destination ./packages/cli/dist
++          npm pack -w @google/gemini-cli-core --pack-destination ./packages/core/dist
++
++      - name: Set up QEMU
++        uses: docker/setup-qemu-action@v3
++
++      - name: Set up Docker Buildx
++        uses: docker/setup-buildx-action@v3
++
++      - name: Log in to the Container registry
++        uses: docker/login-action@v3
++        with:
++          registry: ${{ env.REGISTRY }}
++          username: ${{ github.actor }}
++          password: ${{ secrets.GITHUB_TOKEN }}
++
++      - name: Get version
++        id: package-version
++        run: |
++          VERSION=$(node -p "require('./package.json').version")
++          echo "version=$VERSION" >> $GITHUB_OUTPUT
++
++      - name: Extract metadata (tags, labels) for Docker
++        id: meta
++        uses: docker/metadata-action@v5
++        with:
++          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
++          tags: |
++            type=raw,value=latest,enable=${{ (github.event.inputs.ref_override || github.ref) == 'refs/heads/main' || (github.event.inputs.ref_override || github.ref) == 'main' || ((startsWith(github.event.inputs.ref_override || github.ref, 'refs/tags/v') || startsWith(github.event.inputs.ref_override, 'v')) && !contains(github.event.inputs.ref_override || github.ref, '-')) }}
++            type=raw,value=stable,enable=${{ (github.event.inputs.ref_override || github.ref) == 'refs/heads/main' || (github.event.inputs.ref_override || github.ref) == 'main' || ((startsWith(github.event.inputs.ref_override || github.ref, 'refs/tags/v') || startsWith(github.event.inputs.ref_override, 'v')) && !contains(github.event.inputs.ref_override || github.ref, '-')) }}
++            type=raw,value=preview,enable=${{ (startsWith(github.event.inputs.ref_override || github.ref, 'refs/tags/v') || startsWith(github.event.inputs.ref_override, 'v')) && contains(github.event.inputs.ref_override || github.ref, '-preview') }}
++            type=raw,value=nightly,enable=${{ (github.event.inputs.ref_override || github.ref) == 'refs/heads/main' || (github.event.inputs.ref_override || github.ref) == 'main' || contains(github.event.inputs.ref_override || github.ref, '-nightly') }}
++            type=raw,value=${{ steps.package-version.outputs.version }}
++            type=semver,pattern={{version}}
++            type=sha
++
++      - name: Build and push Docker image
++        uses: docker/build-push-action@v5
++        with:
++          context: .
++          file: ./Dockerfile.sandbox
++          push: true
++          platforms: linux/amd64,linux/arm64
++          tags: ${{ steps.meta.outputs.tags }}
++          labels: ${{ steps.meta.outputs.labels }}
++          build-args: |
++            CLI_VERSION_ARG=${{ steps.package-version.outputs.version }}
+diff --git a/.github/workflows/sync-upstream.yml b/.github/workflows/sync-upstream.yml
+new file mode 100644
+index 000000000..cd2f1fe0a
+--- /dev/null
++++ b/.github/workflows/sync-upstream.yml
+@@ -0,0 +1,39 @@
++name: Sync Upstream
++
++on:
++  schedule:
++    - cron: '0 0 * * *' # Every day at midnight UTC
++  workflow_dispatch: # Allows manual triggering
++
++jobs:
++  sync:
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++          # Using a PAT (Personal Access Token) allows this sync to trigger the Build workflow
++          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
++
++      - name: Sync from Upstream
++        run: |
++          # Configure Git
++          git config --global user.name "GitHub Action"
++          git config --global user.email "action@github.com"
++
++          # Add upstream remote
++          git remote add upstream https://github.com/google-gemini/gemini-cli.git
++          
++          # Fetch everything from upstream
++          git fetch upstream main --tags
++
++          # Sync main branch (Nightly)
++          git checkout main
++          
++          # Merge upstream/main into our main. 
++          # This keeps our new files while bringing in all of Google's updates.
++          git merge upstream/main -m "chore: sync with upstream" --allow-unrelated-histories
++          
++          # Push changes and tags to your fork
++          git push origin main --tags
+diff --git a/Dockerfile b/Dockerfile
+index 25d27d46c..63994bb05 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -8,6 +8,11 @@ ENV CLI_VERSION=$CLI_VERSION_ARG
+ # install minimal set of packages, then clean up
+ RUN apt-get update && apt-get install -y --no-install-recommends \
+   python3 \
++  python3-pip \
++  python3-venv \
++  python-is-python3 \
++  r-base \
++  r-base-dev \
+   make \
+   g++ \
+   man-db \
+@@ -29,6 +34,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
+   && apt-get clean \
+   && rm -rf /var/lib/apt/lists/*
+ 
++# Configure R
++RUN mkdir -p /usr/lib/R/etc \
++  && echo 'options(repos = c(CRAN = "https://p3m.dev/cran/__linux__/bookworm/latest"), download.file.method = "libcurl")' >> /usr/lib/R/etc/Rprofile.site
++
++# Install uv
++RUN ARCH=$(uname -m) && \
++    if [ "$ARCH" = "x86_64" ]; then UV_ARCH="x86_64-unknown-linux-musl"; elif [ "$ARCH" = "aarch64" ]; then UV_ARCH="aarch64-unknown-linux-musl"; else echo "Unsupported arch: $ARCH"; exit 1; fi && \
++    curl -LsSf https://github.com/astral-sh/uv/releases/latest/download/uv-${UV_ARCH}.tar.gz -o /tmp/uv.tar.gz && \
++    tar -xzf /tmp/uv.tar.gz -C /tmp && \
++    mv /tmp/uv-${UV_ARCH}/uv* /usr/local/bin/ && \
++    rm -rf /tmp/uv.tar.gz /tmp/uv-${UV_ARCH}
++
++# Install DuckDB
++RUN ARCH=$(uname -m) && \
++    if [ "$ARCH" = "x86_64" ]; then DUCKDB_ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then DUCKDB_ARCH="arm64"; else echo "Unsupported arch: $ARCH"; exit 1; fi && \
++    curl -LsSf https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-${DUCKDB_ARCH}.zip -o /tmp/duckdb.zip && \
++    unzip /tmp/duckdb.zip -d /usr/local/bin && \
++    rm /tmp/duckdb.zip && \
++    chmod +x /usr/local/bin/duckdb
++
+ # set up npm global package folder under /usr/local/share
+ # give it to non-root user node, already set up in base image
+ RUN mkdir -p /usr/local/share/npm-global \
+diff --git a/Dockerfile.sandbox b/Dockerfile.sandbox
+new file mode 100644
+index 000000000..63994bb05
+--- /dev/null
++++ b/Dockerfile.sandbox
+@@ -0,0 +1,78 @@
++FROM docker.io/library/node:20-slim
++
++ARG SANDBOX_NAME="gemini-cli-sandbox"
++ARG CLI_VERSION_ARG
++ENV SANDBOX="$SANDBOX_NAME"
++ENV CLI_VERSION=$CLI_VERSION_ARG
++
++# install minimal set of packages, then clean up
++RUN apt-get update && apt-get install -y --no-install-recommends \
++  python3 \
++  python3-pip \
++  python3-venv \
++  python-is-python3 \
++  r-base \
++  r-base-dev \
++  make \
++  g++ \
++  man-db \
++  curl \
++  dnsutils \
++  less \
++  jq \
++  bc \
++  gh \
++  git \
++  unzip \
++  rsync \
++  ripgrep \
++  procps \
++  psmisc \
++  lsof \
++  socat \
++  ca-certificates \
++  && apt-get clean \
++  && rm -rf /var/lib/apt/lists/*
++
++# Configure R
++RUN mkdir -p /usr/lib/R/etc \
++  && echo 'options(repos = c(CRAN = "https://p3m.dev/cran/__linux__/bookworm/latest"), download.file.method = "libcurl")' >> /usr/lib/R/etc/Rprofile.site
++
++# Install uv
++RUN ARCH=$(uname -m) && \
++    if [ "$ARCH" = "x86_64" ]; then UV_ARCH="x86_64-unknown-linux-musl"; elif [ "$ARCH" = "aarch64" ]; then UV_ARCH="aarch64-unknown-linux-musl"; else echo "Unsupported arch: $ARCH"; exit 1; fi && \
++    curl -LsSf https://github.com/astral-sh/uv/releases/latest/download/uv-${UV_ARCH}.tar.gz -o /tmp/uv.tar.gz && \
++    tar -xzf /tmp/uv.tar.gz -C /tmp && \
++    mv /tmp/uv-${UV_ARCH}/uv* /usr/local/bin/ && \
++    rm -rf /tmp/uv.tar.gz /tmp/uv-${UV_ARCH}
++
++# Install DuckDB
++RUN ARCH=$(uname -m) && \
++    if [ "$ARCH" = "x86_64" ]; then DUCKDB_ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then DUCKDB_ARCH="arm64"; else echo "Unsupported arch: $ARCH"; exit 1; fi && \
++    curl -LsSf https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-${DUCKDB_ARCH}.zip -o /tmp/duckdb.zip && \
++    unzip /tmp/duckdb.zip -d /usr/local/bin && \
++    rm /tmp/duckdb.zip && \
++    chmod +x /usr/local/bin/duckdb
++
++# set up npm global package folder under /usr/local/share
++# give it to non-root user node, already set up in base image
++RUN mkdir -p /usr/local/share/npm-global \
++  && chown -R node:node /usr/local/share/npm-global
++ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
++ENV PATH=$PATH:/usr/local/share/npm-global/bin
++
++# switch to non-root user node
++USER node
++
++# install gemini-cli and clean up
++COPY packages/cli/dist/google-gemini-cli-*.tgz /tmp/gemini-cli.tgz
++COPY packages/core/dist/google-gemini-cli-core-*.tgz /tmp/gemini-core.tgz
++RUN npm install -g /tmp/gemini-core.tgz \
++  && npm install -g /tmp/gemini-cli.tgz \
++  && node -e "const fs=require('node:fs'); JSON.parse(fs.readFileSync('/usr/local/share/npm-global/lib/node_modules/@google/gemini-cli/package.json','utf8')); JSON.parse(fs.readFileSync('/usr/local/share/npm-global/lib/node_modules/@google/gemini-cli-core/package.json','utf8'));" \
++  && gemini --version > /dev/null \
++  && npm cache clean --force \
++  && rm -f /tmp/gemini-{cli,core}.tgz
++
++# default entrypoint when none specified
++CMD ["gemini"]
+diff --git a/run-docker.sh b/run-docker.sh
+new file mode 100755
+index 000000000..bf33f9d6d
+--- /dev/null
++++ b/run-docker.sh
+@@ -0,0 +1,21 @@
++#!/bin/bash
++
++# Configuration
++IMAGE=$(jq -r '.config.sandboxImageUri' package.json)
++
++if [ -z "$IMAGE" ] || [ "$IMAGE" == "null" ]; then
++  echo "Error: sandboxImageUri not found in package.json"
++  exit 1
++fi
++
++# Run the container with all the necessary mappings
++docker run --rm -it 
++  -u $(id -u):$(id -g) 
++  -e HOME=/home/node 
++  -e TERM=$TERM 
++  -e COLORTERM=${COLORTERM:-truecolor} \
++
++  -v ~/.gemini:/home/node/.gemini 
++  -v "$(pwd)":/app 
++  -w /app 
++  $IMAGE gemini "$@"
+diff --git a/scripts/build_sandbox.js b/scripts/build_sandbox.js
+index 84ac96bc9..115772914 100644
+--- a/scripts/build_sandbox.js
++++ b/scripts/build_sandbox.js
+@@ -41,7 +41,7 @@ const argv = yargs(hideBin(process.argv))
+   .option('f', {
+     alias: 'dockerfile',
+     type: 'string',
+-    default: 'Dockerfile',
++    default: 'Dockerfile.sandbox',
+     description: 'use <dockerfile> for custom image',
+   })
+   .option('i', {
