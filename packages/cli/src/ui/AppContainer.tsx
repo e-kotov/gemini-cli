@@ -726,7 +726,7 @@ export const AppContainer = (props: AppContainerProps) => {
   // Wrap handleDeleteSession to return a Promise for UIActions interface
   const handleDeleteSession = useCallback(
     async (session: SessionInfo): Promise<void> => {
-      handleDeleteSessionSync(session);
+      await handleDeleteSessionSync(session);
     },
     [handleDeleteSessionSync],
   );
@@ -2502,6 +2502,7 @@ Logging in with Google... Restarting Gemini CLI to continue.
       handleResumeSession,
       handleDeleteSession,
       setQueueErrorMessage,
+      addMessage,
       popAllMessages,
       handleApiKeySubmit,
       handleApiKeyCancel,
@@ -2593,6 +2594,7 @@ Logging in with Google... Restarting Gemini CLI to continue.
       handleResumeSession,
       handleDeleteSession,
       setQueueErrorMessage,
+      addMessage,
       popAllMessages,
       handleApiKeySubmit,
       handleApiKeyCancel,
