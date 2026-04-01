@@ -23,7 +23,9 @@ describe('Plan Mode', () => {
       'should allow read-only tools but deny write tools in plan mode',
       {
         settings: {
-          experimental: { plan: true },
+          general: {
+            plan: { enabled: true },
+          },
           tools: {
             core: [
               'run_shell_command',
@@ -67,15 +69,12 @@ describe('Plan Mode', () => {
 
     await rig.setup(testName, {
       settings: {
-        experimental: { plan: true },
         tools: {
           core: ['write_file', 'read_file', 'list_directory'],
         },
         general: {
+          plan: { enabled: true, directory: plansDir },
           defaultApprovalMode: 'plan',
-          plan: {
-            directory: plansDir,
-          },
         },
       },
     });
@@ -113,29 +112,26 @@ describe('Plan Mode', () => {
     ).toBe(true);
   });
 
-  it.skip('should deny write_file to non-plans directory in plan mode', async () => {
+  it('should deny write_file to non-plans directory in plan mode', async () => {
     const plansDir = '.gemini/tmp/foo/123/plans';
     const testName =
       'should deny write_file to non-plans directory in plan mode';
 
     await rig.setup(testName, {
       settings: {
-        experimental: { plan: true },
         tools: {
           core: ['write_file', 'read_file', 'list_directory'],
         },
         general: {
+          plan: { enabled: true, directory: plansDir },
           defaultApprovalMode: 'plan',
-          plan: {
-            directory: plansDir,
-          },
         },
       },
     });
 
     await rig.run({
       approvalMode: 'plan',
-      args: 'Create a file called hello.txt in the current directory.',
+      args: 'Attempt to create a file named "hello.txt" in the current directory. Do not create a plan file, try to write hello.txt directly.',
     });
 
     const toolLogs = rig.readToolLogs();
@@ -156,7 +152,9 @@ describe('Plan Mode', () => {
   it('should be able to enter plan mode from default mode', async () => {
     await rig.setup('should be able to enter plan mode from default mode', {
       settings: {
-        experimental: { plan: true },
+        general: {
+          plan: { enabled: true },
+        },
         tools: {
           core: ['enter_plan_mode'],
           allowed: ['enter_plan_mode'],
@@ -184,15 +182,12 @@ describe('Plan Mode', () => {
 
     await rig.setup(testName, {
       settings: {
-        experimental: { plan: true },
         tools: {
           core: ['write_file', 'read_file', 'list_directory'],
         },
         general: {
+          plan: { enabled: true, directory: plansDir },
           defaultApprovalMode: 'plan',
-          plan: {
-            directory: plansDir,
-          },
         },
       },
     });
